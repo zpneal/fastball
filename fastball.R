@@ -1,56 +1,101 @@
 #### Import functions ####
 rm(list=ls())
-set.seed(5)
+set.seed(1)
 Rcpp::sourceCpp("fastball.cpp") #Compile fastball function
 Rcpp::sourceCpp("curveball.cpp") #Compile curveball function
 
-#### Compare running time of curveball and fastball swaps ####
-swap.speed <- data.frame(cols = 0, curve = 0, fast = 0)
-for (cols in c(100, 1000, 10000, 100000, 1000000, 10000000)) {
-  for (i in 1:10) {
-    print(paste0("Col: ", cols))
-    B <- matrix(rbinom(20*cols,1,0.5),20,cols)  #Generate a twenty-row random matrix
-    Blist <- apply(B==1, 1, which, simplify = FALSE)  #Convert to adjacency list
-    
-    #Perform 100 trades using curveball
-    curve_time <- as.numeric(system.time(curveball_cpp(Blist, 100))[3])
+#### Randomness ####
+#This numerical experiment replicates for fastball the analysis originally used by Strona et al (2014) to illustrate that curveball samples randomly.
+#There are five binary matrices with row marginals {1,2,1} and column marginals {1,2,1}.
+#Starting with each of these five matrices (A - E), the code generates 100000 new random matrices.
+#The output (mat) shows that for each starting matrix, there is an equal probability of generating each of the five possible matrices.
+#Because the curveball and fastball algorithms differ only in how they perform trades, but not in their outcomes, this result is trivial.
+#At the recommendation of reviewers, this result is not presented in the manuscript.
 
-    #Perform 100 trades using fastball
-    fast_time <- as.numeric(system.time(fastball_cpp(Blist, 100))[3])
-
-    #Post results
-    swap.speed <- rbind(swap.speed, c(cols, curve_time, fast_time))
+if (FALSE) {  #Change FALSE to TRUE to run this portion of code
+A <- matrix(c(0,1,0,1,0,1,0,1,0),3,3)  #Define each of the five possible starting matrices and their adjacency lists
+A <- apply(A==1, 1, which, simplify = FALSE)
+B <- matrix(c(0,1,0,1,1,0,0,0,1),3,3)
+B <- apply(B==1, 1, which, simplify = FALSE)
+C <- matrix(c(1,0,0,0,1,1,0,1,0),3,3)
+C <- apply(C==1, 1, which, simplify = FALSE)
+D <- matrix(c(0,0,1,1,1,0,0,1,0),3,3)
+D <- apply(D==1, 1, which, simplify = FALSE)
+E <- matrix(c(0,1,0,0,1,1,1,0,0),3,3)
+E <- apply(E==1, 1, which, simplify = FALSE)
+dat <- data.frame(start = 0, end = 0)
+for (i in 1:100000) {
+  print(i)
+  for (matrix in 1:5) {
+    if (matrix==1) {star <- fastball_cpp(A,25)}  #For each starting matrix, generate 100000 random matrices using fastball
+    if (matrix==2) {star <- fastball_cpp(B,25)}
+    if (matrix==3) {star <- fastball_cpp(C,25)}
+    if (matrix==4) {star <- fastball_cpp(D,25)}
+    if (matrix==5) {star <- fastball_cpp(E,25)}
+    if (identical(A,star)) {dat <- rbind(dat, data.frame(start = matrix, end = 1))}
+    if (identical(B,star)) {dat <- rbind(dat, data.frame(start = matrix, end = 2))}
+    if (identical(C,star)) {dat <- rbind(dat, data.frame(start = matrix, end = 3))}
+    if (identical(D,star)) {dat <- rbind(dat, data.frame(start = matrix, end = 4))}
+    if (identical(E,star)) {dat <- rbind(dat, data.frame(start = matrix, end = 5))}
   }
 }
-swap.speed <- swap.speed[-1,]
-write.csv(swap.speed, "swap.speed.csv")
+dat <- dat[-1,]
+dat <- aggregate(list(count=rep(1,nrow(dat))), dat, length)  #Count how many times each type of matrix is generated from each starting matrix
+mat <- matrix(dat$count, 5 ,5)
+rownames(mat) <- c("A", "B", "C", "D", "E")
+colnames(mat) <- c("A", "B", "C", "D", "E")
+}
 
-## Plot
+#### Compare running time of curveball and fastball swaps ####
+library(microbenchmark)
+library(reshape2)
 library(ggplot2)
 
-dat <- read.csv("swap.speed.csv", row.names = 1, header = TRUE)
+## Experiment
+time <- data.frame(cols = 0, curve = 0, fast = 0)
+for (cols in c(100, 316, 1000, 3162, 10000, 31622, 100000, 316228, 1000000)) {
+  B <- matrix(c(rep(1,cols/2), rep(0,cols/2), rep(0,cols/2), rep(1,cols/2)), nrow=2, ncol=cols, byrow=T)  #Generate 2 x cols matrix
+  Blist <- apply(B==1, 1, which, simplify = FALSE)  #Convert to adjacency list
+  for (i in 1:10) {
+    print(paste0("Col: ", cols))
+    curve_time <- (microbenchmark(curveball_cpp(Blist, 100), times = 1)[1,2])/1e+9  #Seconds for 100 curveball trades
+    fast_time <- (microbenchmark(fastball_cpp(Blist, 100), times = 1)[1,2])/1e+9  #Seconds for 100 fastball trades
+    time <- rbind(time, c(cols, curve_time, fast_time))  #Post times
+  }
+}
+time <- time[-1,]
+write.csv(time, "time.csv")
+
+## Plot
+dat <- read.csv("time.csv", row.names = 1, header = TRUE)  #Compute mean relative improvement
 dat <- aggregate(dat, list(dat$cols), mean)
 dat <- dat[,c("cols", "curve", "fast")]
+improve100 <- round(dat$curve[1]/dat$fast[1],1)
+improve1000 <- round(dat$curve[3]/dat$fast[3],1)
+improve10000 <- round(dat$curve[5]/dat$fast[5],1)
+improve100000 <- round(dat$curve[7]/dat$fast[7],1)
+improve1000000 <- round(dat$curve[9]/dat$fast[9],1)
+
+dat <- read.csv("time.csv", row.names = 1, header = TRUE)  #Import data and reshape for plotting
+dat <- dat[,c("cols", "curve", "fast")]
 colnames(dat) <- c("cols", "Curveball", "Fastball")
-curve7 <- dat$Curveball[6]
-fast7 <- dat$Fastball[6]
-diff7 <- round(curve7/fast7,1)
-curve4 <- dat$Curveball[3]
-fast4 <- dat$Fastball[3]
-dat <- reshape2::melt(dat, id.vars = c("cols"))
+dat <- melt(dat, id.vars = c("cols"))
 colnames(dat) <- c("Columns", "Algorithm", "Time")
 
-pdf("time.pdf", height = 3, width = 3*1.613)
+pdf("time.pdf", height = 3, width = 3*1.613)  #Plot
 ggplot(dat, aes(x=Columns, y=Time, linetype=Algorithm, color=Algorithm)) +
-  geom_point(shape = 19, size = 2.5) + 
-  geom_smooth(method = loess, se = FALSE) +
-  scale_y_continuous(trans = "log10", breaks = c(.001, .01, .1, 1, 10, 100, 1000),
-                     labels = c(expression(10^-3), expression(10^-2), expression(10^-1), expression(10^0), expression(10^1), expression(10^2), expression(10^3))) + 
+  geom_point(shape = 1, size = 1.5, position = position_jitter(width=.1)) + 
+  geom_smooth(method = loess, se = F) +
+  scale_y_continuous(trans = "log10", breaks = c(.0001, .001, .01, .1, 1, 10),
+                     labels = c(expression(10^-4), expression(10^-3), expression(10^-2), expression(10^-1), expression(10^0), expression(10^1))) + 
   scale_x_continuous(trans = "log10", breaks = c(100, 1000, 10000, 100000, 1000000, 10000000),
                      labels = c(expression(10^2), expression(10^3), expression(10^4), expression(10^5), expression(10^6), expression(10^7))) + 
+  annotate("text", x = 100, y = .0001, label = paste0(improve100,"x")) +
+  annotate("text", x = 1000, y = .0004, label = paste0(improve1000,"x")) +
+  annotate("text", x = 10000, y = .004, label = paste0(improve10000,"x")) +
+  annotate("text", x = 100000, y = .04, label = paste0(improve100000,"x")) +
+  annotate("text", x = 1000000, y = .4, label = paste0(improve1000000,"x\nfaster")) +
   xlab("Number of Bottom Nodes (m)") + ylab("Seconds to perform 100 trades") +
-  annotate("errorbar", x = 14000000, ymin = fast7, ymax = curve7, colour = "black", width = .1, size = .75) +
-  annotate("text", x = 26000000, y = (fast7 + curve7)/2.6, label = paste0(diff7,"x"), size = 4) +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         panel.background = element_blank(), axis.line = element_line(colour = "black"),
         axis.text=element_text(size=10), axis.title=element_text(size=10), legend.key.size = unit(2,"line"),
@@ -74,10 +119,6 @@ trades <- 5 * nrow(incidence)
 alpha <- 0.05
 two.tailed <- alpha/2
 samples <- ceiling((stats::power.prop.test(p1 = two.tailed * 0.95, p2 = two.tailed, sig.level = alpha, power = (1 - alpha), alternative = "one.sided")$n)/2)
-
-## Running time for naive R curveball
-sample <- as.numeric(system.time(curveball(incidence, trades))[3])
-Rcurveball.time <- (sample * samples)/60  #In minutes
 
 ## Running time for Cpp curveball
 sample <- as.numeric(system.time(curveball_cpp(incidence_list, trades))[3])
