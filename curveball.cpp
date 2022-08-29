@@ -83,6 +83,10 @@ Rcpp::List curveball_cpp(Rcpp::List inputList, int numSwaps) {
       ++first2;
     }
 
+    if (symDiffLength == 0) {
+      continue;
+    }
+
     intersect.resize(intersectionLength);
     sym_diff.resize(symDiffLength);
 
